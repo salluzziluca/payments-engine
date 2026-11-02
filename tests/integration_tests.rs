@@ -8,7 +8,7 @@ fn malformed_row_is_skipped_and_processing_continues() {
                 garbage\n\
                 deposit,1,3,2.0\n";
     let mut engine = Engine::default();
-    run(data.as_bytes(), &mut engine);
+    run(data.as_bytes(), &mut engine).unwrap();
     assert_eq!(engine.clients[&1].available(), dec!(3.0));
 }
 
@@ -22,7 +22,7 @@ fn full_input_output_test() {
                 withdrawal, 1, 4, 1.5\n
                 withdrawal, 2, 5, 3.0\n";
     let mut engine = Engine::default();
-    run(data.as_bytes(), &mut engine);
+    run(data.as_bytes(), &mut engine).unwrap();
     let mut output = Vec::new();
     payments_engine::output::write_accounts(&mut output, &engine.clients).unwrap();
     let output_str = String::from_utf8(output).unwrap();
