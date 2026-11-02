@@ -25,8 +25,12 @@ pub fn parse(record: &csv::StringRecord) -> Result<Query, Box<dyn Error>> {
 
     let client_id = record.get(1).ok_or("Missing client ID")?.parse()?;
     let tx_id = record.get(2).ok_or("Missing transaction ID")?.parse()?;
-    let amount = Some(record.get(3).ok_or("Missing amount")?.parse()?);
-
+    let amount = match transaction_type {
+        TransactionType::Deposit | TransactionType::Withdrawal => {
+            Some(record.get(3).ok_or("Missing amount")?.parse()?)
+        }
+        _ => None,
+    };
     Ok(Query {
         transaction_type,
         client_id,

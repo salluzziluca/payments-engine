@@ -1,6 +1,9 @@
 use rust_decimal::Decimal;
 
-use crate::parser::{Query, TransactionType};
+use crate::{
+    account::{Account, AccountError},
+    parser::{Query, TransactionType},
+};
 
 use std::collections::HashMap;
 
@@ -13,8 +16,8 @@ pub enum TxState {
 
 pub struct TxRecord {
     client_id: u16,
-    amount: Decimal,
-    state: TxState,
+    pub(crate) amount: Decimal,
+    pub(crate) state: TxState,
 }
 #[derive(Default)]
 pub struct Engine {
@@ -30,136 +33,6 @@ pub enum EngineError {
     Account(#[from] AccountError),
     #[error("transaction id already used")]
     DuplicateTx,
-}
-
-#[derive(Default, Debug)]
-pub struct Account {
-    available: Decimal,
-    held: Decimal,
-    locked: bool,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AccountError {
-    #[error("account is locked")]
-    AccountLocked,
-    #[error("amount must be positive")]
-    InvalidAmount,
-    #[error("arithmetic overflow")]
-    Overflow,
-    #[error("not enough balance to withdraw")]
-    NotEnoughBalance,
-    #[error("transaction already in dispute")]
-    TxAlreadyDisputed,
-}
-
-impl Account {
-    pub fn available(&self) -> Decimal {
-        self.available
-    }
-
-    pub fn held(&self) -> Decimal {
-        self.held
-    }
-
-    pub fn total(&self) -> Decimal {
-        self.available + self.held
-    }
-
-    pub fn is_locked(&self) -> bool {
-        self.locked
-    }
-
-    /// Credits `amount` to the available funds.
-    ///
-    /// # Errors
-    /// Fails if the account is locked, the amount is not positive,
-    /// or the addition overflows.
-    pub fn deposit(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-        if amount <= Decimal::ZERO {
-            return Err(AccountError::InvalidAmount);
-        }
-        self.available = self
-            .available
-            .checked_add(amount)
-            .ok_or(AccountError::Overflow)?;
-        Ok(())
-    }
-
-    pub fn withdraw(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-        if amount <= Decimal::ZERO {
-            return Err(AccountError::InvalidAmount);
-        }
-
-        if self.available < amount {
-            return Err(AccountError::NotEnoughBalance);
-        }
-
-        self.available = self
-            .available
-            .checked_sub(amount)
-            .ok_or(AccountError::Overflow)?;
-        Ok(())
-    }
-    /// Sets the give transaction to Disputed, decreases available funds and increases held funds, waiting for the resolve or chargeback
-    pub fn dispute(&mut self, transaction: &mut TxRecord) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-
-        let available = self
-            .available
-            .checked_sub(transaction.amount)
-            .ok_or(AccountError::Overflow)?;
-        let held = self
-            .held
-            .checked_add(transaction.amount)
-            .ok_or(AccountError::Overflow)?;
-        self.available = available;
-        self.held = held;
-        transaction.state = TxState::Disputed;
-        Ok(())
-    }
-
-    pub fn resolve(&mut self, transaction: &mut TxRecord) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-        let available = self
-            .available
-            .checked_add(transaction.amount)
-            .ok_or(AccountError::Overflow)?;
-        let held = self
-            .held
-            .checked_sub(transaction.amount)
-            .ok_or(AccountError::Overflow)?;
-        self.available = available;
-        self.held = held;
-        transaction.state = TxState::Normal;
-
-        Ok(())
-    }
-    pub fn chargeback(&mut self, transaction: &mut TxRecord) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-
-        let held = self
-            .held
-            .checked_sub(transaction.amount)
-            .ok_or(AccountError::Overflow)?;
-        self.held = held;
-        self.locked = true;
-        transaction.state = TxState::ChargedBack;
-
-        Ok(())
-    }
 }
 
 impl Engine {
@@ -198,7 +71,8 @@ impl Engine {
                 self.clients
                     .entry(query.client_id)
                     .or_default()
-                    .dispute(tx)?;
+                    .dispute(tx.amount)?;
+                tx.state = TxState::Disputed;
             }
             TransactionType::Resolve => {
                 let Some(tx) = self.txs.get_mut(&query.tx_id) else {
@@ -210,7 +84,8 @@ impl Engine {
                 self.clients
                     .entry(query.client_id)
                     .or_default()
-                    .resolve(tx)?;
+                    .resolve(tx.amount)?;
+                tx.state = TxState::Normal;
             }
             TransactionType::Chargeback => {
                 let Some(tx) = self.txs.get_mut(&query.tx_id) else {
@@ -222,7 +97,8 @@ impl Engine {
                 self.clients
                     .entry(query.client_id)
                     .or_default()
-                    .chargeback(tx)?;
+                    .chargeback(tx.amount)?;
+                tx.state = TxState::ChargedBack;
             }
         }
         Ok(())
@@ -230,8 +106,25 @@ impl Engine {
 }
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::account::{Account, AccountError};
     use rust_decimal_macros::dec;
+
+    // Use a fresh tx_id so existing transactions remain unchanged.
+    fn lock_account(engine: &mut Engine, client_id: u16, tx_id: u32) {
+        let transactions = [
+            query(TransactionType::Deposit, client_id, tx_id, Some(dec!(1))),
+            query(TransactionType::Dispute, client_id, tx_id, None),
+            query(TransactionType::Chargeback, client_id, tx_id, None),
+        ];
+
+        for transaction in transactions {
+            engine.process_transaction(transaction).unwrap();
+        }
+
+        assert!(engine.clients[&client_id].is_locked());
+    }
 
     fn query(kind: TransactionType, client_id: u16, tx_id: u32, amount: Option<Decimal>) -> Query {
         Query {
@@ -240,188 +133,6 @@ mod tests {
             tx_id,
             amount,
         }
-    }
-
-    // Deposits
-
-    #[test]
-    fn deposit_updates_balances() {
-        let cases = [
-            ("empty account", dec!(0), dec!(0), dec!(1.5), dec!(1.5)),
-            ("existing balance", dec!(5), dec!(2), dec!(3), dec!(8)),
-            (
-                "four decimals",
-                dec!(1),
-                dec!(0),
-                dec!(0.0001),
-                dec!(1.0001),
-            ),
-            ("negative balance", dec!(-5), dec!(10), dec!(2), dec!(-3)),
-        ];
-
-        for (name, available, held, amount, expected) in cases {
-            let mut account = Account {
-                available,
-                held,
-                locked: false,
-            };
-
-            account.deposit(amount).expect(name);
-
-            assert_eq!(account.available(), expected, "{name}");
-            assert_eq!(account.held(), held, "{name}");
-            assert_eq!(account.total(), expected + held, "{name}");
-            assert!(!account.is_locked(), "{name}");
-        }
-    }
-
-    #[test]
-    fn deposit_rejects_invalid_amount_without_changing_account() {
-        for amount in [dec!(0), dec!(-1)] {
-            let mut account = Account {
-                available: dec!(5),
-                held: dec!(2),
-                locked: false,
-            };
-
-            assert!(
-                matches!(account.deposit(amount), Err(AccountError::InvalidAmount)),
-                "amount: {amount}"
-            );
-            assert_eq!(account.available(), dec!(5), "amount: {amount}");
-            assert_eq!(account.held(), dec!(2), "amount: {amount}");
-            assert!(!account.is_locked(), "amount: {amount}");
-        }
-    }
-
-    #[test]
-    fn deposit_rejects_locked_account() {
-        let mut account = Account {
-            available: dec!(5),
-            held: dec!(2),
-            locked: true,
-        };
-
-        assert!(matches!(
-            account.deposit(dec!(1)),
-            Err(AccountError::AccountLocked)
-        ));
-        assert_eq!(account.available(), dec!(5));
-        assert_eq!(account.held(), dec!(2));
-        assert!(account.is_locked());
-    }
-
-    #[test]
-    fn deposit_overflow_preserves_account() {
-        let mut account = Account {
-            available: Decimal::MAX,
-            held: Decimal::ZERO,
-            locked: false,
-        };
-
-        assert!(matches!(
-            account.deposit(dec!(1)),
-            Err(AccountError::Overflow)
-        ));
-        assert_eq!(account.available(), Decimal::MAX);
-        assert_eq!(account.held(), Decimal::ZERO);
-        assert!(!account.is_locked());
-    }
-
-    // Withdrawals
-
-    #[test]
-    fn withdraw_updates_balances() {
-        let cases = [
-            ("partial", dec!(5), dec!(2), dec!(1.5), dec!(3.5)),
-            ("exact balance", dec!(3), dec!(2), dec!(3), dec!(0)),
-            (
-                "four decimals",
-                dec!(1),
-                dec!(0),
-                dec!(0.0001),
-                dec!(0.9999),
-            ),
-        ];
-
-        for (name, available, held, amount, expected) in cases {
-            let mut account = Account {
-                available,
-                held,
-                locked: false,
-            };
-
-            account.withdraw(amount).expect(name);
-
-            assert_eq!(account.available(), expected, "{name}");
-            assert_eq!(account.held(), held, "{name}");
-            assert_eq!(account.total(), expected + held, "{name}");
-            assert!(!account.is_locked(), "{name}");
-        }
-    }
-
-    #[test]
-    fn withdraw_rejects_invalid_amount_without_changing_account() {
-        for amount in [dec!(0), dec!(-1)] {
-            let mut account = Account {
-                available: dec!(5),
-                held: dec!(2),
-                locked: false,
-            };
-
-            assert!(
-                matches!(account.withdraw(amount), Err(AccountError::InvalidAmount)),
-                "amount: {amount}"
-            );
-            assert_eq!(account.available(), dec!(5), "amount: {amount}");
-            assert_eq!(account.held(), dec!(2), "amount: {amount}");
-            assert!(!account.is_locked(), "amount: {amount}");
-        }
-    }
-
-    #[test]
-    fn withdraw_rejects_insufficient_available_funds() {
-        let cases = [
-            ("empty balance", dec!(0)),
-            ("insufficient balance", dec!(2)),
-            ("negative balance", dec!(-1)),
-        ];
-
-        for (name, available) in cases {
-            let mut account = Account {
-                available,
-                held: dec!(10),
-                locked: false,
-            };
-
-            assert!(
-                matches!(
-                    account.withdraw(dec!(3)),
-                    Err(AccountError::NotEnoughBalance)
-                ),
-                "{name}"
-            );
-            assert_eq!(account.available(), available, "{name}");
-            assert_eq!(account.held(), dec!(10), "{name}");
-            assert!(!account.is_locked(), "{name}");
-        }
-    }
-
-    #[test]
-    fn withdraw_rejects_locked_account() {
-        let mut account = Account {
-            available: dec!(5),
-            held: dec!(2),
-            locked: true,
-        };
-
-        assert!(matches!(
-            account.withdraw(dec!(1)),
-            Err(AccountError::AccountLocked)
-        ));
-        assert_eq!(account.available(), dec!(5));
-        assert_eq!(account.held(), dec!(2));
-        assert!(account.is_locked());
     }
 
     // Engine
@@ -498,14 +209,10 @@ mod tests {
 
         for (name, kind, amount) in cases {
             let mut engine = Engine::default();
-            engine.clients.insert(
-                1,
-                Account {
-                    available: dec!(5),
-                    held: dec!(2),
-                    locked: false,
-                },
-            );
+            let mut account = Account::default();
+            account.deposit(dec!(7)).unwrap();
+            account.dispute(dec!(2)).unwrap();
+            engine.clients.insert(1, account);
 
             assert!(
                 matches!(
@@ -660,6 +367,7 @@ mod tests {
     }
 
     #[test]
+
     fn dispute_rejects_locked_account_without_changing_state() {
         let mut engine = Engine::default();
 
@@ -667,7 +375,7 @@ mod tests {
             .process_transaction(query(TransactionType::Deposit, 1, 1, Some(dec!(5))))
             .unwrap();
 
-        engine.clients.get_mut(&1).unwrap().locked = true;
+        lock_account(&mut engine, 1, 2);
 
         assert!(matches!(
             engine.process_transaction(query(TransactionType::Dispute, 1, 1, None)),
@@ -678,8 +386,10 @@ mod tests {
 
         assert_eq!(account.available(), dec!(5));
         assert_eq!(account.held(), dec!(0));
+        assert_eq!(account.total(), dec!(5));
         assert!(account.is_locked());
         assert_eq!(engine.txs[&1].state, TxState::Normal);
+        assert_eq!(engine.txs[&2].state, TxState::ChargedBack);
     }
 
     #[test]
@@ -706,41 +416,6 @@ mod tests {
         assert_eq!(engine.txs[&1].state, TxState::ChargedBack);
     }
 
-    #[test]
-    fn dispute_overflow_preserves_balances_and_transaction_state() {
-        let cases = [
-            ("available subtraction", Decimal::MIN, Decimal::ZERO),
-            ("held addition", dec!(5), Decimal::MAX),
-        ];
-
-        for (name, available, held) in cases {
-            let mut engine = Engine::default();
-
-            engine
-                .process_transaction(query(TransactionType::Deposit, 1, 1, Some(dec!(1))))
-                .expect(name);
-
-            // Artificial boundary values to exercise arithmetic failures.
-            let account = engine.clients.get_mut(&1).unwrap();
-            account.available = available;
-            account.held = held;
-
-            assert!(
-                matches!(
-                    engine.process_transaction(query(TransactionType::Dispute, 1, 1, None)),
-                    Err(EngineError::Account(AccountError::Overflow))
-                ),
-                "{name}"
-            );
-
-            let account = &engine.clients[&1];
-
-            assert_eq!(account.available(), available, "{name}");
-            assert_eq!(account.held(), held, "{name}");
-            assert!(!account.is_locked(), "{name}");
-            assert_eq!(engine.txs[&1].state, TxState::Normal, "{name}");
-        }
-    }
     #[test]
     fn dispute_ignores_withdrawal() {
         let mut engine = Engine::default();
