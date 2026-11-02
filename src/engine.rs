@@ -175,7 +175,7 @@ mod tests {
 
             assert_eq!(account.available(), expected, "client: {client_id}");
             assert_eq!(account.held(), Decimal::ZERO, "client: {client_id}");
-            assert_eq!(account.total(), expected, "client: {client_id}");
+            assert_eq!(account.total().unwrap(), expected, "client: {client_id}");
             assert!(!account.is_locked(), "client: {client_id}");
         }
     }
@@ -239,7 +239,7 @@ mod tests {
         ));
 
         assert_eq!(engine.clients.len(), 1);
-        assert_eq!(engine.clients[&1].total(), Decimal::ZERO);
+        assert_eq!(engine.clients[&1].total().unwrap(), Decimal::ZERO);
         assert!(!engine.clients[&1].is_locked());
     }
 
@@ -258,7 +258,7 @@ mod tests {
         let account = &engine.clients[&1];
         assert_eq!(account.available(), dec!(0));
         assert_eq!(account.held(), dec!(5));
-        assert_eq!(account.total(), dec!(5));
+        assert_eq!(account.total().unwrap(), dec!(5));
     }
     #[test]
     fn dispute_table_driven_tests() {
@@ -304,7 +304,7 @@ mod tests {
             assert_eq!(account.available(), expected_available, "case: {name}");
             assert_eq!(account.held(), expected_held, "case: {name}");
             assert_eq!(
-                account.total(),
+                account.total().unwrap(),
                 expected_available + expected_held,
                 "case: {name}"
             );
@@ -337,7 +337,7 @@ mod tests {
 
         assert_eq!(account.available(), dec!(3));
         assert_eq!(account.held(), dec!(5));
-        assert_eq!(account.total(), dec!(8));
+        assert_eq!(account.total().unwrap(), dec!(8));
         assert_eq!(engine.txs[&1].state, TxState::Disputed);
         assert_eq!(engine.txs[&2].state, TxState::Normal);
     }
@@ -362,7 +362,7 @@ mod tests {
 
         assert_eq!(account.available(), dec!(0));
         assert_eq!(account.held(), dec!(8));
-        assert_eq!(account.total(), dec!(8));
+        assert_eq!(account.total().unwrap(), dec!(8));
 
         for tx_id in [1, 2] {
             assert_eq!(engine.txs[&tx_id].state, TxState::Disputed, "tx: {tx_id}");
@@ -389,7 +389,7 @@ mod tests {
 
         assert_eq!(account.available(), dec!(5));
         assert_eq!(account.held(), dec!(0));
-        assert_eq!(account.total(), dec!(5));
+        assert_eq!(account.total().unwrap(), dec!(5));
         assert!(account.is_locked());
         assert_eq!(engine.txs[&1].state, TxState::Normal);
         assert_eq!(engine.txs[&2].state, TxState::ChargedBack);
@@ -439,7 +439,7 @@ mod tests {
 
         assert_eq!(account.available(), dec!(3));
         assert_eq!(account.held(), dec!(0));
-        assert_eq!(account.total(), dec!(3));
+        assert_eq!(account.total().unwrap(), dec!(3));
         assert!(!account.is_locked());
         assert_eq!(engine.txs[&1].state, TxState::Normal);
 

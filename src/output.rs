@@ -5,7 +5,7 @@ use crate::account::Account;
 pub fn write_accounts<W: std::io::Write>(
     writer: W,
     accounts: &HashMap<u16, Account>,
-) -> Result<(), csv::Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut csv = csv::Writer::from_writer(writer);
 
     csv.write_record(["client", "available", "held", "total", "locked"])?;
@@ -14,7 +14,7 @@ pub fn write_accounts<W: std::io::Write>(
             client_id.to_string(),
             format!("{:.4}", account.available()),
             format!("{:.4}", account.held()),
-            format!("{:.4}", account.total()),
+            format!("{:.4}", account.total()?),
             account.is_locked().to_string(),
         ])?;
     }

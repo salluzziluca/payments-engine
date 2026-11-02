@@ -30,8 +30,10 @@ impl Account {
         self.held
     }
 
-    pub fn total(&self) -> Decimal {
-        self.available + self.held
+    pub fn total(&self) -> Result<Decimal, AccountError> {
+        self.available
+            .checked_add(self.held)
+            .ok_or(AccountError::Overflow)
     }
 
     pub fn is_locked(&self) -> bool {
@@ -75,7 +77,12 @@ impl Account {
             .ok_or(AccountError::Overflow)?;
         Ok(())
     }
-    /// Sets the give transaction to Disputed, decreases available funds and increases held funds, waiting for the resolve or chargeback
+    /// Updates the account to reflect a dispute on a transaction of the given `amount`.
+    ///
+    /// Moves the `amount` from available to held funds.
+    ///
+    /// # Errors
+    /// Fails if the account is locked or the operation would overflow.
     pub fn dispute(&mut self, amount: Decimal) -> Result<(), AccountError> {
         if self.locked {
             return Err(AccountError::AccountLocked);
@@ -95,7 +102,12 @@ impl Account {
         self.held = held;
         Ok(())
     }
-
+    /// Updates the account to reflect a resolution of a dispute on a transaction of the given `amount`.
+    ///
+    /// Moves the `amount` from held to available funds.
+    ///
+    /// # Errors
+    /// Fails if the account is locked or the operation would overflow.
     pub fn resolve(&mut self, amount: Decimal) -> Result<(), AccountError> {
         if self.locked {
             return Err(AccountError::AccountLocked);
@@ -113,6 +125,13 @@ impl Account {
 
         Ok(())
     }
+
+    /// Updates the account to reflect a chargeback of a disputed transaction of the given `amount`.
+    ///
+    /// Moves the `amount` from held funds and locks the account.
+    ///
+    /// # Errors
+    /// Fails if the account is locked or the operation would overflow.
     pub fn chargeback(&mut self, amount: Decimal) -> Result<(), AccountError> {
         if self.locked {
             return Err(AccountError::AccountLocked);
@@ -162,7 +181,7 @@ mod tests {
 
             assert_eq!(account.available(), expected, "{name}");
             assert_eq!(account.held(), held, "{name}");
-            assert_eq!(account.total(), expected + held, "{name}");
+            assert_eq!(account.total().unwrap(), expected + held, "{name}");
             assert!(!account.is_locked(), "{name}");
         }
     }
@@ -247,7 +266,7 @@ mod tests {
 
             assert_eq!(account.available(), expected, "{name}");
             assert_eq!(account.held(), held, "{name}");
-            assert_eq!(account.total(), expected + held, "{name}");
+            assert_eq!(account.total().unwrap(), expected + held, "{name}");
             assert!(!account.is_locked(), "{name}");
         }
     }
