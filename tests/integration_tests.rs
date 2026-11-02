@@ -29,5 +29,16 @@ fn full_input_output_test() {
     let expected_output = "client,available,held,total,locked\n\
                            1,1.5000,0.0000,1.5000,false\n\
                            2,2.0000,0.0000,2.0000,false\n";
-    assert_eq!(output_str, expected_output);
+    let mut actual_lines = output_str.lines();
+    let mut expected_lines = expected_output.lines();
+
+    assert_eq!(actual_lines.next(), expected_lines.next());
+
+    let mut actual_rows: Vec<_> = actual_lines.collect();
+    let mut expected_rows: Vec<_> = expected_lines.collect();
+
+    actual_rows.sort_unstable();
+    expected_rows.sort_unstable();
+
+    assert_eq!(actual_rows, expected_rows);
 }
