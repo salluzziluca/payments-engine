@@ -21,7 +21,7 @@ pub struct TxRecord {
 }
 #[derive(Default)]
 pub struct Engine {
-    pub clients: HashMap<u16, Account>,
+    clients: HashMap<u16, Account>,
     txs: HashMap<u32, TxRecord>,
 }
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +36,9 @@ pub enum EngineError {
 }
 
 impl Engine {
+    pub fn clients(&self) -> &HashMap<u16, Account> {
+        &self.clients
+    }
     pub fn process_transaction(&mut self, query: Query) -> Result<(), EngineError> {
         match query.transaction_type {
             TransactionType::Deposit => {

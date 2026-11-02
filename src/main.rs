@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run(file, &mut engine)?;
 
     let stdout = io::stdout();
-    output::write_accounts(stdout.lock(), &engine.clients)?;
+    output::write_accounts(stdout.lock(), engine.clients())?;
 
     Ok(())
 }

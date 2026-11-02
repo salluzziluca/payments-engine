@@ -9,7 +9,7 @@ fn malformed_row_is_skipped_and_processing_continues() {
                 deposit,1,3,2.0\n";
     let mut engine = Engine::default();
     run(data.as_bytes(), &mut engine).unwrap();
-    assert_eq!(engine.clients[&1].available(), dec!(3.0));
+    assert_eq!(engine.clients()[&1].available(), dec!(3.0));
 }
 
 // this test recieves the output csv and checks if its is correct
@@ -24,7 +24,7 @@ fn full_input_output_test() {
     let mut engine = Engine::default();
     run(data.as_bytes(), &mut engine).unwrap();
     let mut output = Vec::new();
-    payments_engine::output::write_accounts(&mut output, &engine.clients).unwrap();
+    payments_engine::output::write_accounts(&mut output, engine.clients()).unwrap();
     let output_str = String::from_utf8(output).unwrap();
     let expected_output = "client,available,held,total,locked\n\
                            1,1.5000,0.0000,1.5000,false\n\
