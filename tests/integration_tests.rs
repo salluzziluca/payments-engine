@@ -1,38 +1,15 @@
-use payments_engine::{engine::Engine, run};
+use payments_engine::{engine::Engine, output::write_accounts, run};
 use rust_decimal_macros::dec;
-#[test]
-fn malformed_row_is_skipped_and_processing_continues() {
-    let data = "type,client,tx,amount\n\
-                deposit,1,1,1.0\n\
-                deposit,1,2,\n\
-                garbage\n\
-                deposit,1,3,2.0\n";
-    let mut engine = Engine::default();
-    run(data.as_bytes(), &mut engine).unwrap();
-    assert_eq!(engine.clients()[&1].available(), dec!(3.0));
-}
 
-// this test recieves the output csv and checks if its is correct
-#[test]
-fn full_input_output_test() {
-    let data = "type,client,tx,amount\n\
-                deposit, 1, 1, 1.0\n\
-                deposit, 2, 2, 2.0\n\
-                deposit, 1, 3, 2.0\n\
-                withdrawal, 1, 4, 1.5\n
-                withdrawal, 2, 5, 3.0\n";
-    let mut engine = Engine::default();
-    run(data.as_bytes(), &mut engine).unwrap();
-    let mut output = Vec::new();
-    payments_engine::output::write_accounts(&mut output, engine.clients()).unwrap();
-    let output_str = String::from_utf8(output).unwrap();
-    let expected_output = "client,available,held,total,locked\n\
-                           1,1.5000,0.0000,1.5000,false\n\
-                           2,2.0000,0.0000,2.0000,false\n";
-    let mut actual_lines = output_str.lines();
-    let mut expected_lines = expected_output.lines();
+fn assert_csv_matches(actual: &str, expected: &str) {
+    let mut actual_lines = actual.lines();
+    let mut expected_lines = expected.lines();
 
-    assert_eq!(actual_lines.next(), expected_lines.next());
+    assert_eq!(
+        actual_lines.next(),
+        expected_lines.next(),
+        "CSV headers differ"
+    );
 
     let mut actual_rows: Vec<_> = actual_lines.collect();
     let mut expected_rows: Vec<_> = expected_lines.collect();
@@ -40,72 +17,98 @@ fn full_input_output_test() {
     actual_rows.sort_unstable();
     expected_rows.sort_unstable();
 
-    assert_eq!(actual_rows, expected_rows);
+    assert_eq!(actual_rows, expected_rows, "CSV rows differ");
 }
 
-#[test]
-fn huge_amount_is_rejected_and_output_does_not_panic() {
-    let string = "type,client,tx,amount\n\
-                deposit,1,1,79228162514264337593543950335\n\
-                deposit,2,2,1.0\n";
+fn assert_input_output(input: &str, expected: &str) {
     let mut engine = Engine::default();
-    run(string.as_bytes(), &mut engine).unwrap();
+    run(input.as_bytes(), &mut engine).unwrap();
 
-    let mut out = Vec::new();
-    payments_engine::output::write_accounts(&mut out, engine.clients()).unwrap();
-    let out = String::from_utf8(out).unwrap();
+    let mut output = Vec::new();
+    write_accounts(&mut output, engine.clients()).unwrap();
 
-    assert!(out.contains("2,1.0000,0.0000,1.0000,false"));
-    assert!(!out.contains("79228162514264337593543950335"));
+    let actual = String::from_utf8(output).unwrap();
+    assert_csv_matches(&actual, expected);
+}
+
+// Fixtures
+
+#[test]
+fn basic_transactions_match_expected_output() {
+    assert_input_output(
+        include_str!("data/basic.csv"),
+        include_str!("data/basic_expected.csv"),
+    );
 }
 
 #[test]
-fn invalid_utf8_row_is_skipped_and_processing_continues() {
-    let mut data = b"type,client,tx,amount\ndeposit,1,1,1.0\n".to_vec();
-    data.extend_from_slice(b"deposit,2,2,\xff\xfe\n"); // bytes que no son UTF-8
-    data.extend_from_slice(b"deposit,1,3,2.0\n");
-
-    let mut engine = Engine::default();
-    run(data.as_slice(), &mut engine).unwrap();
-
-    assert_eq!(engine.clients()[&1].available(), dec!(3.0));
+fn dispute_lifecycle_matches_expected_output() {
+    assert_input_output(
+        include_str!("data/disputes.csv"),
+        include_str!("data/disputes_expected.csv"),
+    );
 }
 
+// Robustness
+
 #[test]
-fn full_dispute_lifecycle_input_output() {
+fn malformed_row_is_skipped_and_processing_continues() {
     let input = "\
 type,client,tx,amount
-deposit,1,1,10
-deposit,2,2,8
-withdrawal,1,3,3
-dispute,1,1,
-resolve,1,1,
-dispute,2,2,
-chargeback,2,2,
-deposit,3,4,5
-dispute,3,4,
+deposit,1,1,1.0
+deposit,1,2,
+garbage
+deposit,1,3,2.0
 ";
 
     let mut engine = Engine::default();
     run(input.as_bytes(), &mut engine).unwrap();
 
+    assert_eq!(engine.clients()[&1].available(), dec!(3));
+}
+
+#[test]
+fn huge_amount_is_rejected_and_output_does_not_panic() {
+    let input = "\
+type,client,tx,amount
+deposit,1,1,79228162514264337593543950335
+deposit,2,2,1.0
+";
+
+    let mut engine = Engine::default();
+    run(input.as_bytes(), &mut engine).unwrap();
+
+    // The rejected deposit must not credit any funds.
+    if let Some(account) = engine.clients().get(&1) {
+        assert_eq!(account.available(), dec!(0));
+        assert_eq!(account.held(), dec!(0));
+    }
+
+    assert_eq!(engine.clients()[&2].available(), dec!(1));
+
     let mut output = Vec::new();
-    payments_engine::output::write_accounts(&mut output, engine.clients()).unwrap();
+    write_accounts(&mut output, engine.clients()).unwrap();
 
     let output = String::from_utf8(output).unwrap();
-    let mut lines = output.lines();
 
-    assert_eq!(lines.next(), Some("client,available,held,total,locked"));
-
-    let mut rows: Vec<_> = lines.collect();
-    rows.sort_unstable();
-
-    assert_eq!(
-        rows,
-        vec![
-            "1,7.0000,0.0000,7.0000,false",
-            "2,0.0000,0.0000,0.0000,true",
-            "3,0.0000,5.0000,5.0000,false",
-        ]
+    assert!(
+        output
+            .lines()
+            .any(|line| { line == "2,1.0000,0.0000,1.0000,false" })
     );
+    assert!(!output.contains("79228162514264337593543950335"));
+}
+
+#[test]
+fn invalid_utf8_row_is_skipped_and_processing_continues() {
+    let mut input = b"type,client,tx,amount\ndeposit,1,1,1.0\n".to_vec();
+
+    input.extend_from_slice(b"deposit,2,2,\xff\xfe\n");
+    input.extend_from_slice(b"deposit,1,3,2.0\n");
+
+    let mut engine = Engine::default();
+    run(input.as_slice(), &mut engine).unwrap();
+
+    assert_eq!(engine.clients()[&1].available(), dec!(3));
+    assert!(!engine.clients().contains_key(&2));
 }
