@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use rust_decimal::Decimal;
 
 /// Everything left as pub just because this is a DTO
@@ -19,19 +17,53 @@ pub enum TransactionType {
     Resolve,
     Chargeback,
 }
-pub fn parse(record: &csv::StringRecord) -> Result<Query, Box<dyn Error>> {
-    let transaction_type_str = record.get(0).ok_or("Missing transaction type")?;
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("missing field: {0}")]
+    MissingField(&'static str),
+
+    #[error("invalid transaction type: {0}")]
+    InvalidTransactionType(String),
+
+    #[error("invalid client ID: {0}")]
+    InvalidClientId(#[source] std::num::ParseIntError),
+
+    #[error("invalid transaction ID: {0}")]
+    InvalidTxId(#[source] std::num::ParseIntError),
+
+    #[error("invalid amount: {0}")]
+    InvalidAmount(#[source] rust_decimal::Error),
+
+    #[error("amount must have at most four decimal places")]
+    InvalidPrecision,
+}
+pub fn parse(record: &csv::StringRecord) -> Result<Query, ParseError> {
+    let transaction_type_str = record.get(0).ok_or(ParseError::MissingField("type"))?;
+
     let transaction_type = parse_transaction_type(transaction_type_str)?;
 
-    let client_id = record.get(1).ok_or("Missing client ID")?.parse()?;
-    let tx_id = record.get(2).ok_or("Missing transaction ID")?.parse()?;
+    let client_id = record
+        .get(1)
+        .ok_or(ParseError::MissingField("client"))?
+        .parse::<u16>()
+        .map_err(ParseError::InvalidClientId)?;
+
+    let tx_id = record
+        .get(2)
+        .ok_or(ParseError::MissingField("tx"))?
+        .parse::<u32>()
+        .map_err(ParseError::InvalidTxId)?;
 
     let amount = match transaction_type {
         TransactionType::Deposit | TransactionType::Withdrawal => {
-            let amount: Decimal = record.get(3).ok_or("Missing amount")?.parse()?;
+            let amount = record
+                .get(3)
+                .ok_or(ParseError::MissingField("amount"))?
+                .parse::<Decimal>()
+                .map_err(ParseError::InvalidAmount)?;
 
             if amount.normalize().scale() > 4 {
-                return Err("Amount must have at most four decimal places".into());
+                return Err(ParseError::InvalidPrecision);
             }
 
             Some(amount)
@@ -47,17 +79,16 @@ pub fn parse(record: &csv::StringRecord) -> Result<Query, Box<dyn Error>> {
     })
 }
 
-pub fn parse_transaction_type(input: &str) -> Result<TransactionType, Box<dyn Error>> {
+pub fn parse_transaction_type(input: &str) -> Result<TransactionType, ParseError> {
     match input {
         "deposit" => Ok(TransactionType::Deposit),
         "withdrawal" => Ok(TransactionType::Withdrawal),
         "dispute" => Ok(TransactionType::Dispute),
         "resolve" => Ok(TransactionType::Resolve),
         "chargeback" => Ok(TransactionType::Chargeback),
-        _ => Err(format!("Invalid transaction type: {}", input).into()),
+        _ => Err(ParseError::InvalidTransactionType(input.to_owned())),
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +177,86 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+    #[test]
+    fn parse_returns_expected_errors() {
+        use std::mem::discriminant;
+
+        let cases = [
+            ("missing type", vec![], ParseError::MissingField("type")),
+            (
+                "invalid type",
+                vec!["invalid", "1", "1", "1"],
+                ParseError::InvalidTransactionType("invalid".into()),
+            ),
+            (
+                "missing client",
+                vec!["deposit"],
+                ParseError::MissingField("client"),
+            ),
+            (
+                "missing tx",
+                vec!["deposit", "1"],
+                ParseError::MissingField("tx"),
+            ),
+            (
+                "missing amount",
+                vec!["deposit", "1", "1"],
+                ParseError::MissingField("amount"),
+            ),
+            (
+                "extra precision",
+                vec!["deposit", "1", "1", "1.23456"],
+                ParseError::InvalidPrecision,
+            ),
+        ];
+
+        for (name, fields, expected) in cases {
+            let record = csv::StringRecord::from(fields);
+            let error = parse(&record).expect_err(name);
+
+            assert_eq!(
+                discriminant(&error),
+                discriminant(&expected),
+                "{name}: {error}"
+            );
+
+            if let ParseError::MissingField(expected_field) = expected {
+                assert!(
+                    matches!(error, ParseError::MissingField(field) if field == expected_field),
+                    "{name}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn parse_rejects_invalid_numeric_fields() {
+        for client in ["abc", "-1", "65536"] {
+            let record = csv::StringRecord::from(vec!["deposit", client, "1", "1"]);
+
+            assert!(
+                matches!(parse(&record), Err(ParseError::InvalidClientId(_))),
+                "client: {client}"
+            );
+        }
+
+        for tx in ["abc", "-1", "4294967296"] {
+            let record = csv::StringRecord::from(vec!["deposit", "1", tx, "1"]);
+
+            assert!(
+                matches!(parse(&record), Err(ParseError::InvalidTxId(_))),
+                "tx: {tx}"
+            );
+        }
+
+        for amount in ["", "abc"] {
+            let record = csv::StringRecord::from(vec!["deposit", "1", "1", amount]);
+
+            assert!(
+                matches!(parse(&record), Err(ParseError::InvalidAmount(_))),
+                "amount: {amount:?}"
+            );
         }
     }
 }
