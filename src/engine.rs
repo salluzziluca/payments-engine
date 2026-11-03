@@ -52,7 +52,7 @@ impl Engine {
                     .deposit(amount)?;
                 let transaction_record = TxRecord {
                     client_id: query.client_id,
-                    amount: amount,
+                    amount,
                     state: TxState::Normal,
                 };
                 self.txs.insert(query.tx_id, transaction_record);

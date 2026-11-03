@@ -23,8 +23,6 @@ pub enum AccountError {
     Overflow,
     #[error("not enough balance to withdraw")]
     NotEnoughBalance,
-    #[error("transaction already in dispute")]
-    TxAlreadyDisputed,
 }
 
 impl Account {

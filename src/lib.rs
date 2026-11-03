@@ -25,16 +25,22 @@ pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), csv::Error> {
             }
             Err(error) => return Err(error),
         };
+        let line = record.position().map(|position| position.line());
         let query = match parse(&record) {
             Ok(query) => query,
             Err(error) => {
-                eprintln!("Invalid record: {error}");
+                eprintln!("Invalid record at line {line:?}: {error}");
                 continue;
             }
         };
+        let client_id = query.client_id;
+        let tx_id = query.tx_id;
 
         if let Err(error) = engine.process_transaction(query) {
-            eprintln!("Transaction rejected: {error}");
+            eprintln!(
+                "Transaction rejected at line {line:?}, \
+         client {client_id}, tx {tx_id}: {error}"
+            );
         }
     }
 
