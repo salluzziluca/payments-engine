@@ -58,3 +58,15 @@ fn huge_amount_is_rejected_and_output_does_not_panic() {
     assert!(out.contains("2,1.0000,0.0000,1.0000,false"));
     assert!(!out.contains("79228162514264337593543950335"));
 }
+
+#[test]
+fn invalid_utf8_row_is_skipped_and_processing_continues() {
+    let mut data = b"type,client,tx,amount\ndeposit,1,1,1.0\n".to_vec();
+    data.extend_from_slice(b"deposit,2,2,\xff\xfe\n"); // bytes que no son UTF-8
+    data.extend_from_slice(b"deposit,1,3,2.0\n");
+
+    let mut engine = Engine::default();
+    run(data.as_slice(), &mut engine).unwrap();
+
+    assert_eq!(engine.clients()[&1].available(), dec!(3.0));
+}
