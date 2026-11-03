@@ -28,11 +28,12 @@ pub struct Engine {
 pub enum EngineError {
     #[error("transaction is missing an amount")]
     MissingAmount,
-
     #[error("account error: {0}")]
     Account(#[from] AccountError),
     #[error("transaction id already used")]
     DuplicateTx,
+    #[error("internal inconsistency: account {0} is missing")]
+    MissingAccount(u16),
 }
 
 impl Engine {
@@ -99,12 +100,11 @@ impl Engine {
         if tx.client_id != query.client_id || !matches!(tx.state, TxState::Normal) {
             return Ok(());
         }
-
-        self.clients
-            .entry(query.client_id)
-            .or_default()
-            .dispute(tx.amount)?;
-
+        let account = self
+            .clients
+            .get_mut(&tx.client_id)
+            .ok_or(EngineError::MissingAccount(tx.client_id))?;
+        account.dispute(tx.amount)?;
         tx.state = TxState::Disputed;
         Ok(())
     }
@@ -121,10 +121,11 @@ impl Engine {
             return Ok(());
         }
 
-        self.clients
-            .entry(query.client_id)
-            .or_default()
-            .resolve(tx.amount)?;
+        let account = self
+            .clients
+            .get_mut(&tx.client_id)
+            .ok_or(EngineError::MissingAccount(tx.client_id))?;
+        account.resolve(tx.amount)?;
 
         tx.state = TxState::Normal;
         Ok(())
@@ -142,10 +143,11 @@ impl Engine {
             return Ok(());
         }
 
-        self.clients
-            .entry(query.client_id)
-            .or_default()
-            .chargeback(tx.amount)?;
+        let account = self
+            .clients
+            .get_mut(&tx.client_id)
+            .ok_or(EngineError::MissingAccount(tx.client_id))?;
+        account.chargeback(tx.amount)?;
 
         tx.state = TxState::ChargedBack;
         Ok(())
