@@ -94,13 +94,11 @@ impl Account {
     ///
     /// Moves the `amount` from available to held funds.
     ///
+    /// Doesnt check if the account is locked, because disputes can be raised on locked accounts.
+    ///
     /// # Errors
-    /// Fails if the account is locked or the operation would overflow.
+    /// Fails if the operation would overflow.
     pub fn dispute(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-
         let available = self
             .available
             .checked_sub(amount)
@@ -119,12 +117,11 @@ impl Account {
     ///
     /// Moves the `amount` from held to available funds.
     ///
+    /// Doesnt check if the account is locked, because disputes can be resolved on locked accounts.
+    ///
     /// # Errors
-    /// Fails if the account is locked or the operation would overflow.
+    /// Fails if the operation would overflow.
     pub fn resolve(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
         let available = self
             .available
             .checked_add(amount)
@@ -143,13 +140,11 @@ impl Account {
     ///
     /// Moves the `amount` from held funds and locks the account.
     ///
+    /// Doesnt check if the account is locked, because chargebacks can be raised on locked accounts.
+    ///
     /// # Errors
-    /// Fails if the account is locked or the operation would overflow.
+    /// Fails if operation would overflow.
     pub fn chargeback(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
-            return Err(AccountError::AccountLocked);
-        }
-
         let held = self
             .held
             .checked_sub(amount)

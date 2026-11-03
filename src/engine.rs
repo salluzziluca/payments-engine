@@ -128,6 +128,20 @@ mod tests {
 
         assert!(engine.clients[&client_id].is_locked());
     }
+    fn engine_with_disputes(disputed: &[u32]) -> Engine {
+        let mut engine = Engine::default();
+        for (tx_id, amount) in [(1, dec!(10)), (2, dec!(5))] {
+            engine
+                .process_transaction(query(TransactionType::Deposit, 1, tx_id, Some(amount)))
+                .unwrap();
+        }
+        for &tx_id in disputed {
+            engine
+                .process_transaction(query(TransactionType::Dispute, 1, tx_id, None))
+                .unwrap();
+        }
+        engine
+    }
 
     fn query(kind: TransactionType, client_id: u16, tx_id: u32, amount: Option<Decimal>) -> Query {
         Query {
@@ -370,29 +384,23 @@ mod tests {
     }
 
     #[test]
-
-    fn dispute_rejects_locked_account_without_changing_state() {
+    #[test]
+    fn dispute_applies_on_locked_account() {
         let mut engine = Engine::default();
-
         engine
             .process_transaction(query(TransactionType::Deposit, 1, 1, Some(dec!(5))))
             .unwrap();
-
         lock_account(&mut engine, 1, 2);
 
-        assert!(matches!(
-            engine.process_transaction(query(TransactionType::Dispute, 1, 1, None)),
-            Err(EngineError::Account(AccountError::AccountLocked))
-        ));
+        engine
+            .process_transaction(query(TransactionType::Dispute, 1, 1, None))
+            .unwrap();
 
         let account = &engine.clients[&1];
-
-        assert_eq!(account.available(), dec!(5));
-        assert_eq!(account.held(), dec!(0));
-        assert_eq!(account.total().unwrap(), dec!(5));
+        assert_eq!(account.available(), dec!(0));
+        assert_eq!(account.held(), dec!(5));
         assert!(account.is_locked());
-        assert_eq!(engine.txs[&1].state, TxState::Normal);
-        assert_eq!(engine.txs[&2].state, TxState::ChargedBack);
+        assert_eq!(engine.txs[&1].state, TxState::Disputed);
     }
 
     #[test]
@@ -446,5 +454,149 @@ mod tests {
         if let Some(tx) = engine.txs.get(&2) {
             assert_eq!(tx.state, TxState::Normal);
         }
+    }
+
+    //resolve
+
+    #[test]
+    fn resolve_releases_held_funds() {
+        let mut engine = engine_with_disputes(&[1]);
+
+        engine
+            .process_transaction(query(TransactionType::Resolve, 1, 1, None))
+            .unwrap();
+
+        let account = &engine.clients[&1];
+        assert_eq!(account.available(), dec!(15));
+        assert_eq!(account.held(), dec!(0));
+        assert_eq!(account.total().unwrap(), dec!(15));
+        assert!(!account.is_locked());
+        assert_eq!(engine.txs[&1].state, TxState::Normal);
+    }
+
+    #[test]
+    fn resolve_is_ignored_when_it_does_not_apply() {
+        // name, client, tx, disputed txs before the resolve
+        let cases = [
+            ("missing tx", 1, 99, vec![1]),
+            ("wrong client", 2, 1, vec![1]),
+            ("tx not under dispute", 1, 2, vec![1]),
+        ];
+
+        for (name, client_id, tx_id, disputed) in cases {
+            let mut engine = engine_with_disputes(&disputed);
+
+            engine
+                .process_transaction(query(TransactionType::Resolve, client_id, tx_id, None))
+                .expect(name);
+
+            let account = &engine.clients[&1];
+            assert_eq!(account.available(), dec!(5), "{name}");
+            assert_eq!(account.held(), dec!(10), "{name}");
+            assert_eq!(engine.txs[&1].state, TxState::Disputed, "{name}");
+        }
+    }
+
+    #[test]
+    fn resolved_transaction_can_be_disputed_again() {
+        let mut engine = engine_with_disputes(&[1]);
+
+        for kind in [TransactionType::Resolve, TransactionType::Dispute] {
+            engine.process_transaction(query(kind, 1, 1, None)).unwrap();
+        }
+
+        assert_eq!(engine.clients[&1].held(), dec!(10));
+        assert_eq!(engine.txs[&1].state, TxState::Disputed);
+    }
+
+    // chargeback
+
+    #[test]
+    fn chargeback_removes_held_funds_and_locks_account() {
+        let mut engine = engine_with_disputes(&[1]);
+
+        engine
+            .process_transaction(query(TransactionType::Chargeback, 1, 1, None))
+            .unwrap();
+
+        let account = &engine.clients[&1];
+        assert_eq!(account.available(), dec!(5));
+        assert_eq!(account.held(), dec!(0));
+        assert_eq!(account.total().unwrap(), dec!(5));
+        assert!(account.is_locked());
+        assert_eq!(engine.txs[&1].state, TxState::ChargedBack);
+    }
+
+    #[test]
+    fn chargeback_is_ignored_when_it_does_not_apply() {
+        let cases = [
+            ("missing tx", 1, 99, vec![1]),
+            ("wrong client", 2, 1, vec![1]),
+            ("tx not under dispute", 1, 2, vec![1]),
+        ];
+
+        for (name, client_id, tx_id, disputed) in cases {
+            let mut engine = engine_with_disputes(&disputed);
+
+            engine
+                .process_transaction(query(TransactionType::Chargeback, client_id, tx_id, None))
+                .expect(name);
+
+            let account = &engine.clients[&1];
+            assert_eq!(account.held(), dec!(10), "{name}");
+            assert!(!account.is_locked(), "{name}");
+            assert_eq!(engine.txs[&1].state, TxState::Disputed, "{name}");
+        }
+    }
+
+    #[test]
+    fn locked_account_rejects_deposits_and_withdrawals() {
+        let mut engine = engine_with_disputes(&[1]);
+        engine
+            .process_transaction(query(TransactionType::Chargeback, 1, 1, None))
+            .unwrap();
+
+        for kind in [TransactionType::Deposit, TransactionType::Withdrawal] {
+            assert!(matches!(
+                engine.process_transaction(query(kind, 1, 3, Some(dec!(1)))),
+                Err(EngineError::Account(AccountError::AccountLocked))
+            ));
+        }
+        assert_eq!(engine.clients[&1].available(), dec!(5));
+    }
+
+    #[test]
+    fn locked_account_can_still_settle_other_disputes() {
+        // Chargeback on tx 1 locks the account; tx 2 is still disputed and
+        // must be able to finish, or its funds would stay held forever.
+        let mut engine = engine_with_disputes(&[1, 2]);
+
+        engine
+            .process_transaction(query(TransactionType::Chargeback, 1, 1, None))
+            .unwrap();
+        engine
+            .process_transaction(query(TransactionType::Resolve, 1, 2, None))
+            .unwrap();
+
+        let account = &engine.clients[&1];
+        assert_eq!(account.available(), dec!(5));
+        assert_eq!(account.held(), dec!(0));
+        assert!(account.is_locked());
+    }
+
+    #[test]
+    fn chargeback_cannot_be_repeated_or_resolved() {
+        let mut engine = engine_with_disputes(&[1]);
+        engine
+            .process_transaction(query(TransactionType::Chargeback, 1, 1, None))
+            .unwrap();
+
+        for kind in [TransactionType::Chargeback, TransactionType::Resolve] {
+            engine.process_transaction(query(kind, 1, 1, None)).unwrap();
+        }
+
+        assert_eq!(engine.clients[&1].available(), dec!(5));
+        assert_eq!(engine.clients[&1].held(), dec!(0));
+        assert_eq!(engine.txs[&1].state, TxState::ChargedBack);
     }
 }
