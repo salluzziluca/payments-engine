@@ -112,3 +112,91 @@ fn invalid_utf8_row_is_skipped_and_processing_continues() {
     assert_eq!(engine.clients()[&1].available(), dec!(3));
     assert!(!engine.clients().contains_key(&2));
 }
+#[test]
+#[ignore = "large dataset; run explicitly"]
+fn million_deposits_produce_expected_output() {
+    use std::{
+        fs::{self, File, OpenOptions},
+        io::{BufWriter, Write},
+        path::PathBuf,
+        time::{Instant, SystemTime, UNIX_EPOCH},
+    };
+
+    const TRANSACTIONS: u32 = 1_000_000;
+    const CLIENTS: u32 = 1000;
+
+    struct TemporaryInput(PathBuf);
+
+    impl Drop for TemporaryInput {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+
+    let path = std::env::temp_dir().join(format!(
+        "payments-benchmark-{}-{unique}.csv",
+        std::process::id()
+    ));
+
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+
+    let temporary_input = TemporaryInput(path);
+
+    // Generate the input before measuring processing.
+    {
+        let mut writer = BufWriter::new(file);
+        writeln!(writer, "type,client,tx,amount").unwrap();
+
+        for tx in 1..=TRANSACTIONS {
+            writeln!(writer, "deposit,{},{tx},0.0001", tx % CLIENTS).unwrap();
+        }
+
+        writer.flush().unwrap();
+    }
+
+    let input = File::open(&temporary_input.0).unwrap();
+    let mut engine = Engine::default();
+
+    let processing_started = Instant::now();
+    run(input, &mut engine).unwrap();
+    let processing_time = processing_started.elapsed();
+
+    assert_eq!(engine.clients().len(), CLIENTS as usize);
+
+    let mut output = Vec::new();
+
+    let output_started = Instant::now();
+    write_accounts(&mut output, engine.clients()).unwrap();
+    let output_time = output_started.elapsed();
+
+    let actual = String::from_utf8(output).unwrap();
+
+    let mut expected = String::from("client,available,held,total,locked\n");
+
+    for client in 0..CLIENTS {
+        expected.push_str(&format!("{client},0.1000,0.0000,0.1000,false\n"));
+    }
+
+    assert_csv_matches(&actual, &expected);
+
+    eprintln!(
+        "\nTransactions: {TRANSACTIONS}\n\
+         Accounts: {}\n\
+         Processing: {:.3} s\n\
+         Output: {:.3} s\n\
+         Throughput: {:.0} transactions/s",
+        engine.clients().len(),
+        processing_time.as_secs_f64(),
+        output_time.as_secs_f64(),
+        f64::from(TRANSACTIONS) / processing_time.as_secs_f64(),
+    );
+}

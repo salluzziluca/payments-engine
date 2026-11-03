@@ -19,6 +19,11 @@ struct TxRecord {
     amount: Decimal,
     state: TxState,
 }
+
+/// In-memory payments engine.
+///
+/// Processes transactions in the order supplied by the caller.
+/// Retains accepted deposits to support subsequent disputes.
 #[derive(Default)]
 pub struct Engine {
     clients: HashMap<u16, Account>,
@@ -40,6 +45,18 @@ impl Engine {
     pub fn clients(&self) -> &HashMap<u16, Account> {
         &self.clients
     }
+
+    /// Applies one transaction to the engine.
+    ///
+    /// Missing dispute references, client mismatches, and invalid
+    /// transaction states are ignored.
+    ///
+    /// Locked accounts reject deposits and withdrawals but allow
+    /// dispute processing.
+    ///
+    /// # Errors
+    /// Returns an error for duplicate deposit IDs, missing amounts,
+    /// or rejected account operations.
     pub fn process_transaction(&mut self, query: Query) -> Result<(), EngineError> {
         match query.transaction_type {
             TransactionType::Deposit => self.deposit(query),

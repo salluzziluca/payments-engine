@@ -7,9 +7,15 @@ use std::io::Read;
 
 use crate::{engine::Engine, parser::parse};
 
-/// A row that is not valid UTF-8 is a bad row, not a broken stream:
-/// skip it and keep reading.
-/// Anything else (I/O failure) means the input itself is unreliable.
+/// Processes CSV records incrementally without loading the full input.
+///
+/// Invalid UTF-8 rows, parsing failures, and rejected transactions
+/// are reported to stderr and skipped.
+///
+/// # Errors
+/// Returns an error if CSV reading fails for a non-recoverable reason.
+///
+/// Transactions applied before a reading failure are not rolled back.
 pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), csv::Error> {
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
