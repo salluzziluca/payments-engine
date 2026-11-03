@@ -76,7 +76,7 @@ The tests cover account balance updates, transaction state transitions, locked a
 
 
 ## AI Usage 
-The only AI used for this implementation was github copilot, free version. And only used for writing test with autocomplete on. I would write the name of the test, se if the recomendation was ok, and then hit enter. It was deactivated for the rest of the implementation as I enjoy writing code by hand sometimes
+The only AI used for this implementation was github copilot, free version. And only used for writing test with autocomplete on. I would write the name of the test, see if the recomendation was ok, and then hit enter. It was deactivated for the rest of the implementation as I enjoy writing code by hand sometimes
 
 ---
 
