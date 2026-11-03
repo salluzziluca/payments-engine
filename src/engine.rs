@@ -8,16 +8,16 @@ use crate::{
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
-pub enum TxState {
+enum TxState {
     Normal,
     Disputed,
     ChargedBack,
 }
 
-pub struct TxRecord {
+struct TxRecord {
     client_id: u16,
-    pub(crate) amount: Decimal,
-    pub(crate) state: TxState,
+    amount: Decimal,
+    state: TxState,
 }
 #[derive(Default)]
 pub struct Engine {

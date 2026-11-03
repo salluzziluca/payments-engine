@@ -51,8 +51,8 @@ impl Account {
     /// # Errors
     /// Fails if the account is locked, the amount is not positive,
     /// or the addition overflows.
-    pub fn deposit(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
+    pub(crate) fn deposit(&mut self, amount: Decimal) -> Result<(), AccountError> {
+        if self.is_locked() {
             return Err(AccountError::AccountLocked);
         }
         if amount <= Decimal::ZERO {
@@ -72,8 +72,8 @@ impl Account {
         Ok(())
     }
 
-    pub fn withdraw(&mut self, amount: Decimal) -> Result<(), AccountError> {
-        if self.locked {
+    pub(crate) fn withdraw(&mut self, amount: Decimal) -> Result<(), AccountError> {
+        if self.is_locked() {
             return Err(AccountError::AccountLocked);
         }
         if amount <= Decimal::ZERO {
@@ -98,7 +98,7 @@ impl Account {
     ///
     /// # Errors
     /// Fails if the operation would overflow.
-    pub fn dispute(&mut self, amount: Decimal) -> Result<(), AccountError> {
+    pub(crate) fn dispute(&mut self, amount: Decimal) -> Result<(), AccountError> {
         let available = self
             .available
             .checked_sub(amount)
@@ -121,7 +121,7 @@ impl Account {
     ///
     /// # Errors
     /// Fails if the operation would overflow.
-    pub fn resolve(&mut self, amount: Decimal) -> Result<(), AccountError> {
+    pub(crate) fn resolve(&mut self, amount: Decimal) -> Result<(), AccountError> {
         let available = self
             .available
             .checked_add(amount)
@@ -144,7 +144,7 @@ impl Account {
     ///
     /// # Errors
     /// Fails if operation would overflow.
-    pub fn chargeback(&mut self, amount: Decimal) -> Result<(), AccountError> {
+    pub(crate) fn chargeback(&mut self, amount: Decimal) -> Result<(), AccountError> {
         let held = self
             .held
             .checked_sub(amount)
