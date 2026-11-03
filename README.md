@@ -7,16 +7,50 @@ The focus of this implementation is simplicity, correctness, and performance. It
 I paid special attention to the design of the engine to avoid unnecessary cloning of data structures, which can lead to performance issues. The engine uses the `Entry` API for efficient lookups and updates in the transaction map. Checked arithmetic rejects operations that would overflow without modifying account balances.
 Also, I designed this system to be easily understandable and maintainable, with clear separation of concerns between the engine logic, account management, and output formatting. This also leads to a more testable codebase, as demonstrated by the included integration and unit tests.
 
-
 ## Usage
 
-run the engine with a CSV file containing transactions and output the resulting account balances to another CSV file:
+Run the engine with a CSV file and write the resulting account balances to another CSV file:
 
 ```bash
 cargo run -- transactions.csv > accounts.csv
-``` 
+```
 
-the input CSV file should have the following columns: `type`, `client`, `tx`, and `amount`. The output CSV file will contain the final state of each account, including available balance, held funds, total balance, and whether the account is locked.
+The input requires the header `type,client,tx,amount`, in that order. Surrounding whitespace is accepted.
+
+| Column | Type | Description |
+|---|---|---|
+| `type` | String | `deposit`, `withdrawal`, `dispute`, `resolve`, or `chargeback` |
+| `client` | `u16` | Client ID |
+| `tx` | `u32` | Transaction ID; disputes, resolutions, and chargebacks reference an existing deposit |
+| `amount` | Decimal | Positive amount with up to four effective decimal places; may be empty or omitted for disputes, resolutions, and chargebacks |
+
+Example input:
+
+```csv
+type,client,tx,amount
+deposit,1,1,5.0
+withdrawal,1,2,1.5
+deposit,2,3,2.0
+dispute,2,3,
+```
+
+Expected output (account order may vary):
+
+```csv
+client,available,held,total,locked
+1,3.5000,0.0000,3.5000,false
+2,0.0000,2.0000,2.0000,false
+```
+
+Two sample inputs and their expected outputs are included in `tests/data/`: `basic.csv` and `disputes.csv`, with corresponding `_expected.csv` files.
+
+```bash
+cargo run -- tests/data/basic.csv > accounts.csv
+cargo run -- tests/data/disputes.csv > accounts.csv
+```
+
+Diagnostics are written to stderr; stdout contains only the output CSV.
+
 
 ## Business rules:
 
