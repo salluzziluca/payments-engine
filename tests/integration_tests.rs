@@ -70,3 +70,42 @@ fn invalid_utf8_row_is_skipped_and_processing_continues() {
 
     assert_eq!(engine.clients()[&1].available(), dec!(3.0));
 }
+
+#[test]
+fn full_dispute_lifecycle_input_output() {
+    let input = "\
+type,client,tx,amount
+deposit,1,1,10
+deposit,2,2,8
+withdrawal,1,3,3
+dispute,1,1,
+resolve,1,1,
+dispute,2,2,
+chargeback,2,2,
+deposit,3,4,5
+dispute,3,4,
+";
+
+    let mut engine = Engine::default();
+    run(input.as_bytes(), &mut engine).unwrap();
+
+    let mut output = Vec::new();
+    payments_engine::output::write_accounts(&mut output, engine.clients()).unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    let mut lines = output.lines();
+
+    assert_eq!(lines.next(), Some("client,available,held,total,locked"));
+
+    let mut rows: Vec<_> = lines.collect();
+    rows.sort_unstable();
+
+    assert_eq!(
+        rows,
+        vec![
+            "1,7.0000,0.0000,7.0000,false",
+            "2,0.0000,0.0000,0.0000,true",
+            "3,0.0000,5.0000,5.0000,false",
+        ]
+    );
+}
