@@ -75,8 +75,11 @@ cargo test
 The tests cover account balance updates, transaction state transitions, locked accounts, duplicate deposits, arithmetic overflow, input validation, invalid UTF-8 records, and output errors. Integration tests also verify complete CSV input/output scenarios. The large-dataset test is ignored by default and can be run using the command in the Performance section.
 
 
+## Dependencies 
+The implementation uses `csv` for streaming input and CSV output, `rust_decimal` for decimal arithmetic without binary floating-point representation errors, and `thiserror` for typed errors. Tests also use `rust_decimal_macros` to express amounts clearly with dec!. I chose explicit parsing through `StringRecord` to provide field-specific errors and validate amounts according to the transaction type.
+
 ## AI Usage 
-The only AI used for this implementation was github copilot, free version. And only used for writing test with autocomplete on. I would write the name of the test, see if the recomendation was ok, and then hit tab. It was deactivated for the rest of the implementation as I enjoy writing code by hand sometimes
+The only AI used for this implementation was github copilot, free version. And only used for writing test with autocomplete on. I would write the name of the test, see if the recomendation was ok, and then hit tab. It was deactivated for the rest of the implementation as I enjoy writing code by hand sometimes.
 
 ---
 
