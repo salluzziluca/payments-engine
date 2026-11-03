@@ -5,7 +5,7 @@ use crate::{
     parser::{Query, TransactionType},
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
 #[derive(Debug, PartialEq)]
 enum TxState {
@@ -69,27 +69,26 @@ impl Engine {
 
     /// Credits the account and records the deposit only after success.
     ///
+    /// uses `Entry` to avoid double lookups in the `txs` map.
+    ///
     /// Rejects duplicate deposit IDs, missing amounts, and account errors.
     fn deposit(&mut self, query: Query) -> Result<(), EngineError> {
-        if self.txs.contains_key(&query.tx_id) {
-            return Err(EngineError::DuplicateTx);
-        }
+        let entry = match self.txs.entry(query.tx_id) {
+            Entry::Occupied(_) => return Err(EngineError::DuplicateTx),
+            Entry::Vacant(entry) => entry,
+        };
 
         let amount = query.amount.ok_or(EngineError::MissingAmount)?;
-
         self.clients
             .entry(query.client_id)
             .or_default()
             .deposit(amount)?;
 
-        self.txs.insert(
-            query.tx_id,
-            TxRecord {
-                client_id: query.client_id,
-                amount,
-                state: TxState::Normal,
-            },
-        );
+        entry.insert(TxRecord {
+            client_id: query.client_id,
+            amount,
+            state: TxState::Normal,
+        });
 
         Ok(())
     }
@@ -660,5 +659,55 @@ mod tests {
         assert_eq!(engine.clients[&1].available(), dec!(5));
         assert_eq!(engine.clients[&1].held(), dec!(0));
         assert_eq!(engine.txs[&1].state, TxState::ChargedBack);
+    }
+    #[test]
+    fn duplicate_deposit_preserves_accounts_and_history() {
+        for duplicate_client in [1, 2] {
+            for disputed in [false, true] {
+                let mut engine = Engine::default();
+
+                engine
+                    .process_transaction(query(TransactionType::Deposit, 1, 1, Some(dec!(5))))
+                    .unwrap();
+
+                if disputed {
+                    engine
+                        .process_transaction(query(TransactionType::Dispute, 1, 1, None))
+                        .unwrap();
+                }
+
+                assert!(matches!(
+                    engine.process_transaction(query(
+                        TransactionType::Deposit,
+                        duplicate_client,
+                        1,
+                        Some(dec!(99)),
+                    )),
+                    Err(EngineError::DuplicateTx)
+                ));
+
+                assert_eq!(engine.clients.len(), 1);
+                assert_eq!(engine.txs.len(), 1);
+
+                let account = &engine.clients[&1];
+
+                let (available, held, state) = if disputed {
+                    (dec!(0), dec!(5), TxState::Disputed)
+                } else {
+                    (dec!(5), dec!(0), TxState::Normal)
+                };
+
+                assert_eq!(account.available(), available);
+                assert_eq!(account.held(), held);
+                assert_eq!(account.total().unwrap(), dec!(5));
+                assert!(!account.is_locked());
+
+                let tx = &engine.txs[&1];
+
+                assert_eq!(tx.client_id, 1);
+                assert_eq!(tx.amount, dec!(5));
+                assert_eq!(tx.state, state);
+            }
+        }
     }
 }

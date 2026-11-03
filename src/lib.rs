@@ -6,8 +6,9 @@ pub mod parser;
 use std::io::Read;
 
 use crate::{engine::Engine, parser::parse};
-
 /// Processes CSV records incrementally without loading the full input.
+///
+/// Reuses a single record buffer to reduce per-row allocations.
 ///
 /// Invalid UTF-8 rows, parsing failures, and rejected transactions
 /// are reported to stderr and skipped.
@@ -22,33 +23,46 @@ pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), csv::Error> {
         .flexible(true)
         .from_reader(input);
 
-    for result in reader.records() {
-        let record = match result {
-            Ok(record) => record,
+    // Unlike records(), read_record() reuses this buffer across rows.
+    // The record is fully processed before the next read overwrites it.
+    let mut record = csv::StringRecord::new();
+
+    loop {
+        match reader.read_record(&mut record) {
+            Ok(false) => break,
+            Ok(true) => process_record(&record, engine),
             Err(error) if matches!(error.kind(), csv::ErrorKind::Utf8 { .. }) => {
                 eprintln!("Invalid record: {error}");
-                continue;
             }
             Err(error) => return Err(error),
-        };
-        let line = record.position().map(|position| position.line());
-        let query = match parse(&record) {
-            Ok(query) => query,
-            Err(error) => {
-                eprintln!("Invalid record at line {line:?}: {error}");
-                continue;
-            }
-        };
-        let client_id = query.client_id;
-        let tx_id = query.tx_id;
-
-        if let Err(error) = engine.process_transaction(query) {
-            eprintln!(
-                "Transaction rejected at line {line:?}, \
-         client {client_id}, tx {tx_id}: {error}"
-            );
         }
     }
 
     Ok(())
+}
+
+/// Parses and applies one record, reporting recoverable errors.
+fn process_record(record: &csv::StringRecord, engine: &mut Engine) {
+    let location = match record.position() {
+        Some(position) => format!("line {}", position.line()),
+        None => "unknown line".to_owned(),
+    };
+
+    let query = match parse(record) {
+        Ok(query) => query,
+        Err(error) => {
+            eprintln!("Invalid record at {location}: {error}");
+            return;
+        }
+    };
+
+    let client_id = query.client_id;
+    let tx_id = query.tx_id;
+
+    if let Err(error) = engine.process_transaction(query) {
+        eprintln!(
+            "Transaction rejected at {location}, \
+             client {client_id}, tx {tx_id}: {error}"
+        );
+    }
 }

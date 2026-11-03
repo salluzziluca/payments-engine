@@ -369,4 +369,49 @@ mod tests {
     fn max_balance_is_ten_to_the_eighteen() {
         assert_eq!(MAX_BALANCE, Decimal::from(1_000_000_000_000_000_000i64));
     }
+
+    #[test]
+    fn resolve_overflow_preserves_balances() {
+        let cases = [
+            ("available addition", Decimal::MAX, dec!(1)),
+            ("held subtraction", dec!(0), Decimal::MIN),
+        ];
+
+        for (name, available, held) in cases {
+            let mut account = Account {
+                available,
+                held,
+                locked: true,
+            };
+
+            assert!(
+                matches!(account.resolve(dec!(1)), Err(AccountError::Overflow)),
+                "{name}"
+            );
+
+            assert_eq!(account.available(), available, "{name}");
+            assert_eq!(account.held(), held, "{name}");
+            assert!(account.is_locked(), "{name}");
+        }
+    }
+
+    #[test]
+    fn chargeback_overflow_preserves_balances_and_lock_state() {
+        for locked in [false, true] {
+            let mut account = Account {
+                available: dec!(5),
+                held: Decimal::MIN,
+                locked,
+            };
+
+            assert!(matches!(
+                account.chargeback(dec!(1)),
+                Err(AccountError::Overflow)
+            ));
+
+            assert_eq!(account.available(), dec!(5));
+            assert_eq!(account.held(), Decimal::MIN);
+            assert_eq!(account.is_locked(), locked);
+        }
+    }
 }
