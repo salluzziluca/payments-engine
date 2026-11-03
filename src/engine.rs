@@ -42,6 +42,11 @@ pub enum EngineError {
 }
 
 impl Engine {
+    /// Consumes the engine and returns its accounts without cloning.
+    /// Transaction history is discarded.
+    pub(crate) fn into_clients(self) -> HashMap<u16, Account> {
+        self.clients
+    }
     pub fn clients(&self) -> &HashMap<u16, Account> {
         &self.clients
     }

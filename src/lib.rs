@@ -2,6 +2,7 @@ pub mod account;
 pub mod engine;
 pub mod output;
 pub mod parser;
+pub mod sharded;
 
 use std::io::Read;
 
