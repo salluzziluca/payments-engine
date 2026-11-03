@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use rust_decimal::Decimal;
+
 use crate::account::Account;
 use crate::account::AccountError;
 
@@ -15,6 +17,25 @@ pub enum OutputError {
     Account(#[from] AccountError),
 }
 
+/// Formats a decimal with exactly four decimal places without
+/// increasing its internal scale, which could overflow for large values.
+fn format_amount(amount: Decimal) -> String {
+    let mut text = amount.round_dp(4).to_string();
+
+    let decimal_places = match text.split_once('.') {
+        Some((_, fraction)) => fraction.len(),
+        None => {
+            text.push('.');
+            0
+        }
+    };
+
+    for _ in decimal_places..4 {
+        text.push('0');
+    }
+
+    text
+}
 pub fn write_accounts<W: std::io::Write>(
     writer: W,
     accounts: &HashMap<u16, Account>,
@@ -25,9 +46,9 @@ pub fn write_accounts<W: std::io::Write>(
     for (client_id, account) in accounts {
         csv.write_record([
             client_id.to_string(),
-            format!("{:.4}", account.available()),
-            format!("{:.4}", account.held()),
-            format!("{:.4}", account.total()?),
+            format_amount(account.available()),
+            format_amount(account.held()),
+            format_amount(account.total()?),
             account.is_locked().to_string(),
         ])?;
     }
@@ -83,6 +104,33 @@ mod tests {
                 matches!(error, OutputError::Io(_)),
                 "fail_on_write={fail_on_write}: {error}"
             );
+        }
+    }
+
+    #[test]
+    fn format_amount_produces_four_decimal_places() {
+        use rust_decimal_macros::dec;
+
+        let cases = [
+            ("zero", dec!(0), "0.0000"),
+            ("integer", dec!(5), "5.0000"),
+            ("fraction", dec!(1.5), "1.5000"),
+            ("four decimals", dec!(1.2345), "1.2345"),
+            ("negative", dec!(-3.5), "-3.5000"),
+            (
+                "maximum decimal",
+                Decimal::MAX,
+                "79228162514264337593543950335.0000",
+            ),
+            (
+                "minimum decimal",
+                Decimal::MIN,
+                "-79228162514264337593543950335.0000",
+            ),
+        ];
+
+        for (name, amount, expected) in cases {
+            assert_eq!(format_amount(amount), expected, "{name}");
         }
     }
 }
