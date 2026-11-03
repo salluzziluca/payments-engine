@@ -4,8 +4,7 @@ This repository contains a Rust implementation of a payments engine that process
 
 The focus of this implementation is simplicity, correctness, and performance. It uses the `rust_decimal` crate for precise decimal arithmetic, ensuring accurate financial calculations. 
 
-I paid special attention to the design of the engine to avoid unnecessary cloning of data structures, which can lead to performance issues. The engine uses the `Entry` API for efficient lookups and updates in the transaction map, and it enforces a maximum balance limit to prevent overflows.
-
+I paid special attention to the design of the engine to avoid unnecessary cloning of data structures, which can lead to performance issues. The engine uses the `Entry` API for efficient lookups and updates in the transaction map. Checked arithmetic rejects operations that would overflow without modifying account balances.
 Also, I designed this system to be easily understandable and maintainable, with clear separation of concerns between the engine logic, account management, and output formatting. This also leads to a more testable codebase, as demonstrated by the included integration and unit tests.
 
 
@@ -25,7 +24,6 @@ The engine enforces the following business rules:
 - Deposits and withdrawals must have a valid amount. Withdrawals cannot exceed the available balance.
 - Disputes can only be raised on deposits, and they move the disputed amount from available to held funds. Resolutions and chargebacks can only be applied to disputed transactions.
 - Transaction IDs are assumed to be globally unique, as specified. An additional duplicate check is performed against retained deposit IDs. Withdrawal IDs are not retained or checked for duplicates.
-- The engine enforces an application-defined maximum total balance of 10^18 currency units after deposits. Checked arithmetic detects overflow before account balances are modified.
 - Invalid records and rejected transactions are skipped and reported to stderr. Non-recoverable CSV reading errors abort processing, and the CLI does not write partial account output.
 - Locked accounts reject deposits and withdrawals, but allow disputes, resolutions, and chargebacks because these operations manage previously accepted transactions.
 - Chargebacks remove the disputed amount from held funds, reduce the account’s total balance, and permanently lock the account.
