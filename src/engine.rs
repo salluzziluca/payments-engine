@@ -41,69 +41,113 @@ impl Engine {
     }
     pub fn process_transaction(&mut self, query: Query) -> Result<(), EngineError> {
         match query.transaction_type {
-            TransactionType::Deposit => {
-                if self.txs.contains_key(&query.tx_id) {
-                    return Err(EngineError::DuplicateTx);
-                }
-                let amount = query.amount.ok_or(EngineError::MissingAmount)?;
-                self.clients
-                    .entry(query.client_id)
-                    .or_default()
-                    .deposit(amount)?;
-                let transaction_record = TxRecord {
-                    client_id: query.client_id,
-                    amount,
-                    state: TxState::Normal,
-                };
-                self.txs.insert(query.tx_id, transaction_record);
-            }
-            TransactionType::Withdrawal => {
-                let amount = query.amount.ok_or(EngineError::MissingAmount)?;
-                self.clients
-                    .entry(query.client_id)
-                    .or_default()
-                    .withdraw(amount)?;
-            }
-            TransactionType::Dispute => {
-                let Some(tx) = self.txs.get_mut(&query.tx_id) else {
-                    return Ok(());
-                };
-                if tx.client_id != query.client_id || !matches!(tx.state, TxState::Normal) {
-                    return Ok(());
-                }
-                self.clients
-                    .entry(query.client_id)
-                    .or_default()
-                    .dispute(tx.amount)?;
-                tx.state = TxState::Disputed;
-            }
-            TransactionType::Resolve => {
-                let Some(tx) = self.txs.get_mut(&query.tx_id) else {
-                    return Ok(());
-                };
-                if tx.client_id != query.client_id || !matches!(tx.state, TxState::Disputed) {
-                    return Ok(());
-                }
-                self.clients
-                    .entry(query.client_id)
-                    .or_default()
-                    .resolve(tx.amount)?;
-                tx.state = TxState::Normal;
-            }
-            TransactionType::Chargeback => {
-                let Some(tx) = self.txs.get_mut(&query.tx_id) else {
-                    return Ok(());
-                };
-                if tx.client_id != query.client_id || !matches!(tx.state, TxState::Disputed) {
-                    return Ok(());
-                }
-                self.clients
-                    .entry(query.client_id)
-                    .or_default()
-                    .chargeback(tx.amount)?;
-                tx.state = TxState::ChargedBack;
-            }
+            TransactionType::Deposit => self.deposit(query),
+            TransactionType::Withdrawal => self.withdraw(query),
+            TransactionType::Dispute => self.dispute(query),
+            TransactionType::Resolve => self.resolve(query),
+            TransactionType::Chargeback => self.chargeback(query),
         }
+    }
+
+    /// Credits the account and records the deposit only after success.
+    ///
+    /// Rejects duplicate deposit IDs, missing amounts, and account errors.
+    fn deposit(&mut self, query: Query) -> Result<(), EngineError> {
+        if self.txs.contains_key(&query.tx_id) {
+            return Err(EngineError::DuplicateTx);
+        }
+
+        let amount = query.amount.ok_or(EngineError::MissingAmount)?;
+
+        self.clients
+            .entry(query.client_id)
+            .or_default()
+            .deposit(amount)?;
+
+        self.txs.insert(
+            query.tx_id,
+            TxRecord {
+                client_id: query.client_id,
+                amount,
+                state: TxState::Normal,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Debits available funds. Withdrawals are not stored for disputes.
+    fn withdraw(&mut self, query: Query) -> Result<(), EngineError> {
+        let amount = query.amount.ok_or(EngineError::MissingAmount)?;
+
+        self.clients
+            .entry(query.client_id)
+            .or_default()
+            .withdraw(amount)?;
+
+        Ok(())
+    }
+
+    /// Holds funds from a normal deposit belonging to the specified client.
+    ///
+    /// Missing transactions, client mismatches, and invalid states are ignored.
+    fn dispute(&mut self, query: Query) -> Result<(), EngineError> {
+        let Some(tx) = self.txs.get_mut(&query.tx_id) else {
+            return Ok(());
+        };
+
+        if tx.client_id != query.client_id || !matches!(tx.state, TxState::Normal) {
+            return Ok(());
+        }
+
+        self.clients
+            .entry(query.client_id)
+            .or_default()
+            .dispute(tx.amount)?;
+
+        tx.state = TxState::Disputed;
+        Ok(())
+    }
+
+    /// Releases held funds and returns the deposit to its normal state.
+    ///
+    /// Missing transactions, client mismatches, and invalid states are ignored.
+    fn resolve(&mut self, query: Query) -> Result<(), EngineError> {
+        let Some(tx) = self.txs.get_mut(&query.tx_id) else {
+            return Ok(());
+        };
+
+        if tx.client_id != query.client_id || !matches!(tx.state, TxState::Disputed) {
+            return Ok(());
+        }
+
+        self.clients
+            .entry(query.client_id)
+            .or_default()
+            .resolve(tx.amount)?;
+
+        tx.state = TxState::Normal;
+        Ok(())
+    }
+
+    /// Removes disputed funds and permanently locks the account.
+    ///
+    /// Missing transactions, client mismatches, and invalid states are ignored.
+    fn chargeback(&mut self, query: Query) -> Result<(), EngineError> {
+        let Some(tx) = self.txs.get_mut(&query.tx_id) else {
+            return Ok(());
+        };
+
+        if tx.client_id != query.client_id || !matches!(tx.state, TxState::Disputed) {
+            return Ok(());
+        }
+
+        self.clients
+            .entry(query.client_id)
+            .or_default()
+            .chargeback(tx.amount)?;
+
+        tx.state = TxState::ChargedBack;
         Ok(())
     }
 }
