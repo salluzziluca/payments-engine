@@ -25,12 +25,20 @@ pub fn parse(record: &csv::StringRecord) -> Result<Query, Box<dyn Error>> {
 
     let client_id = record.get(1).ok_or("Missing client ID")?.parse()?;
     let tx_id = record.get(2).ok_or("Missing transaction ID")?.parse()?;
+
     let amount = match transaction_type {
         TransactionType::Deposit | TransactionType::Withdrawal => {
-            Some(record.get(3).ok_or("Missing amount")?.parse()?)
+            let amount: Decimal = record.get(3).ok_or("Missing amount")?.parse()?;
+
+            if amount.normalize().scale() > 4 {
+                return Err("Amount must have at most four decimal places".into());
+            }
+
+            Some(amount)
         }
         _ => None,
     };
+
     Ok(Query {
         transaction_type,
         client_id,
@@ -110,5 +118,34 @@ mod tests {
         let record = csv::StringRecord::from(vec!["dispute", "1", "1"]);
         let query = parse(&record).unwrap();
         assert_eq!(query.amount, None);
+    }
+
+    #[test]
+    fn parse_validates_amount_precision() {
+        let cases = [
+            ("integer", "1", true),
+            ("four decimals", "1.2345", true),
+            ("trailing zero", "1.23450", true),
+            ("smallest unit", "0.0001", true),
+            ("extra precision", "1.23456", false),
+            ("below smallest unit", "0.00001", false),
+        ];
+
+        for kind in ["deposit", "withdrawal"] {
+            for (name, amount, valid) in cases {
+                let record = csv::StringRecord::from(vec![kind, "1", "1", amount]);
+                let result = parse(&record);
+
+                assert_eq!(result.is_ok(), valid, "{kind}, {name}: {result:?}");
+
+                if valid {
+                    assert_eq!(
+                        result.unwrap().amount,
+                        Some(amount.parse::<Decimal>().unwrap()),
+                        "{kind}, {name}"
+                    );
+                }
+            }
+        }
     }
 }

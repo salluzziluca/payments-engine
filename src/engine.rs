@@ -384,7 +384,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn dispute_applies_on_locked_account() {
         let mut engine = Engine::default();
         engine
