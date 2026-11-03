@@ -1,13 +1,5 @@
 use rust_decimal::Decimal;
-/// Maximum total balance accepted after a deposit: 10^18 currency units.
-///
-/// This application-defined limit rejects deposits that would raise the
-/// account's total balance above this value. It is not a limit imposed
-/// by `Decimal` and is independent of output formatting.
-///
-/// It does not bound held funds or the absolute available balance:
-/// disputes can make available funds negative while preserving the total.
-pub const MAX_BALANCE: Decimal = Decimal::from_parts(0xA764_0000, 0x0DE0_B6B3, 0, false, 0);
+
 #[derive(Default, Debug)]
 pub struct Account {
     available: Decimal,
@@ -58,17 +50,18 @@ impl Account {
         if amount <= Decimal::ZERO {
             return Err(AccountError::InvalidAmount);
         }
-        let new_total = self
-            .total()?
-            .checked_add(amount)
-            .ok_or(AccountError::Overflow)?;
-        if new_total > MAX_BALANCE {
-            return Err(AccountError::Overflow);
-        }
-        self.available = self
+
+        let available = self
             .available
             .checked_add(amount)
             .ok_or(AccountError::Overflow)?;
+
+        // Reject the deposit if its resulting total cannot be represented.
+        available
+            .checked_add(self.held)
+            .ok_or(AccountError::Overflow)?;
+
+        self.available = available;
         Ok(())
     }
 
@@ -366,10 +359,6 @@ mod tests {
             assert_eq!(account.held(), held, "{name}");
             assert!(!account.is_locked(), "{name}");
         }
-    }
-    #[test]
-    fn max_balance_is_ten_to_the_eighteen() {
-        assert_eq!(MAX_BALANCE, Decimal::from(1_000_000_000_000_000_000i64));
     }
 
     #[test]

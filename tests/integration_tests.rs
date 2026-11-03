@@ -69,7 +69,7 @@ deposit,1,3,2.0
 }
 
 #[test]
-fn huge_amount_is_rejected_and_output_does_not_panic() {
+fn maximum_decimal_deposit_is_accepted_and_formatted() {
     let input = "\
 type,client,tx,amount
 deposit,1,1,79228162514264337593543950335
@@ -79,11 +79,12 @@ deposit,2,2,1.0
     let mut engine = Engine::default();
     run(input.as_bytes(), &mut engine).unwrap();
 
-    // The rejected deposit must not credit any funds.
-    if let Some(account) = engine.clients().get(&1) {
-        assert_eq!(account.available(), dec!(0));
-        assert_eq!(account.held(), dec!(0));
-    }
+    let account = &engine.clients()[&1];
+
+    assert_eq!(account.available(), rust_decimal::Decimal::MAX);
+    assert_eq!(account.held(), dec!(0));
+    assert_eq!(account.total().unwrap(), rust_decimal::Decimal::MAX);
+    assert!(!account.is_locked());
 
     assert_eq!(engine.clients()[&2].available(), dec!(1));
 
@@ -91,13 +92,20 @@ deposit,2,2,1.0
     write_accounts(&mut output, engine.clients()).unwrap();
 
     let output = String::from_utf8(output).unwrap();
+    let mut lines = output.lines();
 
-    assert!(
-        output
-            .lines()
-            .any(|line| { line == "2,1.0000,0.0000,1.0000,false" })
+    assert_eq!(lines.next(), Some("client,available,held,total,locked"));
+
+    let mut rows: Vec<_> = lines.collect();
+    rows.sort_unstable();
+
+    assert_eq!(
+        rows,
+        vec![
+            "1,79228162514264337593543950335.0000,0.0000,79228162514264337593543950335.0000,false",
+            "2,1.0000,0.0000,1.0000,false",
+        ]
     );
-    assert!(!output.contains("79228162514264337593543950335"));
 }
 
 #[test]
