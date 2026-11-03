@@ -6,25 +6,41 @@ pub mod parser;
 use std::io::Read;
 
 use crate::{engine::Engine, parser::parse};
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    #[error("CSV input error: {0}")]
+    Csv(#[from] csv::Error),
+
+    #[error("invalid or missing CSV header; expected: type,client,tx,amount")]
+    InvalidHeader,
+}
+
 /// Processes CSV records incrementally without loading the full input.
 ///
+/// Requires the header: type,client,tx,amount.
 /// Reuses a single record buffer to reduce per-row allocations.
 ///
-/// Invalid UTF-8 rows, parsing failures, and rejected transactions
+/// Invalid UTF-8 data rows, parsing failures, and rejected transactions
 /// are reported to stderr and skipped.
 ///
 /// # Errors
-/// Returns an error if CSV reading fails for a non-recoverable reason.
+/// Returns an error for an invalid or missing header, or a
+/// non-recoverable CSV reading failure.
 ///
 /// Transactions applied before a reading failure are not rolled back.
-pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), csv::Error> {
+pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), RunError> {
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .flexible(true)
         .from_reader(input);
 
-    // Unlike records(), read_record() reuses this buffer across rows.
-    // The record is fully processed before the next read overwrites it.
+    let expected = ["type", "client", "tx", "amount"];
+
+    if !reader.headers()?.iter().eq(expected) {
+        return Err(RunError::InvalidHeader);
+    }
+
+    // Reuse the record buffer instead of allocating a new one per row.
     let mut record = csv::StringRecord::new();
 
     loop {
@@ -34,7 +50,7 @@ pub fn run<R: Read>(input: R, engine: &mut Engine) -> Result<(), csv::Error> {
             Err(error) if matches!(error.kind(), csv::ErrorKind::Utf8 { .. }) => {
                 eprintln!("Invalid record: {error}");
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         }
     }
 
