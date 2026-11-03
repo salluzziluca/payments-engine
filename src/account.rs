@@ -1,5 +1,11 @@
 use rust_decimal::Decimal;
 
+/// max client total balance to prevent overflows
+///
+/// Keeps every balance inside the range `Decimal` can print with four
+/// decimals (formatting panics at 28+ digits)
+/// Rejects absurd amounts early.
+pub const MAX_BALANCE: Decimal = Decimal::from_parts(0xA764_0000, 0x0DE0_B6B3, 0, false, 0);
 #[derive(Default, Debug)]
 pub struct Account {
     available: Decimal,
@@ -51,6 +57,13 @@ impl Account {
         }
         if amount <= Decimal::ZERO {
             return Err(AccountError::InvalidAmount);
+        }
+        let new_total = self
+            .total()?
+            .checked_add(amount)
+            .ok_or(AccountError::Overflow)?;
+        if new_total > MAX_BALANCE {
+            return Err(AccountError::Overflow);
         }
         self.available = self
             .available
@@ -358,5 +371,9 @@ mod tests {
             assert_eq!(account.held(), held, "{name}");
             assert!(!account.is_locked(), "{name}");
         }
+    }
+    #[test]
+    fn max_balance_is_ten_to_the_eighteen() {
+        assert_eq!(MAX_BALANCE, Decimal::from(1_000_000_000_000_000_000i64));
     }
 }

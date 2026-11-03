@@ -42,3 +42,19 @@ fn full_input_output_test() {
 
     assert_eq!(actual_rows, expected_rows);
 }
+
+#[test]
+fn huge_amount_is_rejected_and_output_does_not_panic() {
+    let string = "type,client,tx,amount\n\
+                deposit,1,1,79228162514264337593543950335\n\
+                deposit,2,2,1.0\n";
+    let mut engine = Engine::default();
+    run(string.as_bytes(), &mut engine).unwrap();
+
+    let mut out = Vec::new();
+    payments_engine::output::write_accounts(&mut out, engine.clients()).unwrap();
+    let out = String::from_utf8(out).unwrap();
+
+    assert!(out.contains("2,1.0000,0.0000,1.0000,false"));
+    assert!(!out.contains("79228162514264337593543950335"));
+}
