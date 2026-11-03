@@ -1,10 +1,12 @@
 use rust_decimal::Decimal;
-
-/// max client total balance to prevent overflows
+/// Maximum total balance accepted after a deposit: 10^18 currency units.
 ///
-/// Keeps every balance inside the range `Decimal` can print with four
-/// decimals (formatting panics at 28+ digits)
-/// Rejects absurd amounts early.
+/// This application-defined limit rejects deposits that would raise the
+/// account's total balance above this value. It is not a limit imposed
+/// by `Decimal` and is independent of output formatting.
+///
+/// It does not bound held funds or the absolute available balance:
+/// disputes can make available funds negative while preserving the total.
 pub const MAX_BALANCE: Decimal = Decimal::from_parts(0xA764_0000, 0x0DE0_B6B3, 0, false, 0);
 #[derive(Default, Debug)]
 pub struct Account {

@@ -1,3 +1,4 @@
+use payments_engine::RunError;
 use payments_engine::{engine::Engine, output::write_accounts, run};
 use rust_decimal_macros::dec;
 
@@ -198,5 +199,52 @@ fn million_deposits_produce_expected_output() {
         processing_time.as_secs_f64(),
         output_time.as_secs_f64(),
         f64::from(TRANSACTIONS) / processing_time.as_secs_f64(),
+    );
+}
+
+#[test]
+fn invalid_csv_header_is_rejected_before_processing() {
+    let cases = [
+        ("empty file", ""),
+        ("missing header", "deposit,1,1,1.0\n"),
+        ("wrong column", "type,customer,tx,amount\n"),
+        ("wrong order", "client,type,tx,amount\n"),
+        ("missing column", "type,client,tx\n"),
+        ("extra column", "type,client,tx,amount,extra\n"),
+    ];
+
+    for (name, input) in cases {
+        let mut engine = Engine::default();
+
+        assert!(
+            matches!(
+                run(input.as_bytes(), &mut engine),
+                Err(RunError::InvalidHeader)
+            ),
+            "{name}"
+        );
+        assert!(engine.clients().is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn csv_header_accepts_surrounding_whitespace() {
+    let input = "\
+ type , client , tx , amount
+deposit,1,1,2.5
+";
+
+    let mut engine = Engine::default();
+    run(input.as_bytes(), &mut engine).unwrap();
+
+    assert_eq!(engine.clients().len(), 1);
+    assert_eq!(engine.clients()[&1].available(), dec!(2.5));
+}
+
+#[test]
+fn header_only_input_produces_header_only_output() {
+    assert_input_output(
+        "type,client,tx,amount\n",
+        "client,available,held,total,locked\n",
     );
 }
